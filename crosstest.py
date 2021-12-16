@@ -121,9 +121,9 @@ class Logger:
         self.debugging = False
         self.colors = True
 
-    def info(self, *args, **kwargs):
-        if self.colors: print('[\033[32minfo\033[0m] ', *args, **kwargs)
-        else: print('[info] ', *args, **kwargs)
+    def info(self, *args):
+        if self.colors: print('[\033[32minfo\033[0m] ', *args)
+        else: print('[info] ', *args)
 
     def warning(self, *args):
         if self.colors: print('[\033[93mwarning\033[0m] ', *args)
@@ -160,11 +160,13 @@ argParser.add_argument('--debug', action='store_true',
         help='Print debug output')
 argParser.add_argument('--nocolors', action='store_true',
         help='Disabels colors in logger')
+argParser.add_argument('--alloweval', action='store_true',
+        help='Dosen\'t skip tasks were eval is used')
 # argParser.add_argument('--upgrade', action='store_true',
         # help='Redownloads repos')
 argParser.add_argument('--result', default='short',
         choices=['short', 'full', 'errors', 'mismatches'],
-        help='Control how statistic is displayed at the end')
+        help='Controls how statistic is displayed at the end')
 argParser.add_argument('repo', default='.', type=str,
         help='Path to repository for test')
 
@@ -235,6 +237,7 @@ stat = {
     "error": 0,
     "mismatch": 0,
     "unknown": 0,
+    "skipped": 0,
 }
 
 errorTests = dict()
@@ -256,7 +259,8 @@ for dir in dirs:
 
         taskfile = [ *(pyfiles & ALLOWED_PROG_NAMES) ]
         if len(taskfile) == 0:
-            log.warning(f'No python program found for {dir}/{task}, skiping...')
+            log.warning(f'No python program found for {dir}/{task}, skipping...')
+            stat['skipped'] += 1
             continue
         elif len(taskfile) > 1:
             log.warning(f'Too many python programs to choose from: {taskfile}, using {taskfile[0]}')
@@ -274,10 +278,27 @@ for dir in dirs:
                 log.info(f'Testing {dir}/{task} on {repo["owner"]} tests:')
                 log.debug('test on - ', taskfile, testsdir)
 
+                if not args.alloweval:
+                    with open(taskfile, 'r') as f:
+                        if f.read().find('eval') != -1:
+                            log.warning('Program uses eval, skipping...')
+                            stat['skipped'] += 1
+                            continue
+
                 oldstdout = sys.stdout
                 sys.stdout = tesout = StringIO()
-                res = tester(taskfile, testsdir)
-                sys.stdout = oldstdout
+                try:
+                    res = tester(taskfile, testsdir)
+                except Exception as e:
+                    sys.stdout = oldstdout
+                    log.error('Tester crashed')
+                    log.debug('crash report')
+                    log.debug(e)
+                    stat['skipped'] += 1
+                    continue
+                else:
+                    sys.stdout = oldstdout
+                    log.debug(tesout.getvalue())
 
                 if res == 0:
                     log.info('Tests completed successfully')
@@ -286,7 +307,7 @@ for dir in dirs:
                     log.info('Tests weren\'t completed due to some errors')
                     stat['error'] += 1
                     errorTests[testname] = tesout.getvalue()
-                elif res == 3:
+                elif res == 2 or res == 3:
                     log.info('Tests completed but results are not matching')
                     stat['mismatch'] += 1
                     mismTests[testname] = tesout.getvalue()
@@ -300,7 +321,8 @@ print('ok:       ', stat['ok'])
 print('errors    ', stat['error'])
 print('mismatchs:', stat['mismatch'])
 print('unknown:  ', stat['unknown'])
-print('total:    ', stat['ok'] + stat['error'] + stat['mismatch'] + stat['unknown'])
+print('skipped:  ', stat['skipped'])
+print('total:    ', sum(stat.values()))
 
 if len(errorTests):
     print()
