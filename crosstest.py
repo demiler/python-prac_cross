@@ -5,6 +5,7 @@ import os
 import sys
 import argparse
 import subprocess
+from io import StringIO
 from tester import main as tester
 
 ########################################################################
@@ -161,6 +162,9 @@ argParser.add_argument('--nocolors', action='store_true',
         help='Disabels colors in logger')
 # argParser.add_argument('--upgrade', action='store_true',
         # help='Redownloads repos')
+argParser.add_argument('--result', default='short',
+        choices=['short', 'full', 'errors', 'mismatches'],
+        help='Control how statistic is displayed at the end')
 argParser.add_argument('repo', default='.', type=str,
         help='Path to repository for test')
 
@@ -233,8 +237,9 @@ stat = {
     "unknown": 0,
 }
 
-errorTests = []
-mismTests = []
+errorTests = dict()
+mismTests = dict()
+unkTests = dict()
 
 dirs = sorted([ *filter(lambda x: re.match('^2021\d+$', x), os.listdir(ownrepo)) ])
 for dir in dirs:
@@ -259,6 +264,7 @@ for dir in dirs:
 
         for repo in choosenRepos:
             testsdir = os.path.join(repo['dir'], dir, task, 'tests')
+            testname = ': '.join([repo['owner'], os.path.join(dir, task)])
             log.debug('testdir - ', testsdir)
 
             if not os.path.exists(testsdir):
@@ -267,11 +273,11 @@ for dir in dirs:
                 log.info('='*10)
                 log.info(f'Testing {dir}/{task} on {repo["owner"]} tests:')
                 log.debug('test on - ', taskfile, testsdir)
-                try:
-                    res = tester(taskfile, testsdir)
-                except Exception as e:
-                    log.error('Tester failed to complete test')
-                    log.error(e)
+
+                oldstdout = sys.stdout
+                sys.stdout = tesout = StringIO()
+                res = tester(taskfile, testsdir)
+                sys.stdout = oldstdout
 
                 if res == 0:
                     log.info('Tests completed successfully')
@@ -279,14 +285,15 @@ for dir in dirs:
                 elif res == 1:
                     log.info('Tests weren\'t completed due to some errors')
                     stat['error'] += 1
-                    errorTests.append(': '.join([repo['owner'], os.path.join(dir, task)]))
+                    errorTests[testname] = tesout.getvalue()
                 elif res == 3:
                     log.info('Tests completed but results are not matching')
                     stat['mismatch'] += 1
-                    mismTests.append(': '.join([repo['owner'], os.path.join(dir, task)]))
+                    mismTests[testname] = tesout.getvalue()
                 else:
                     log.info('Test completed with exit code', res)
                     stat['unknown'] += 1
+                    unkTests[testname] = tesout.getvalue()
 
 print('======== Statistic ========')
 print('ok:       ', stat['ok'])
@@ -298,9 +305,26 @@ print('total:    ', stat['ok'] + stat['error'] + stat['mismatch'] + stat['unknow
 if len(errorTests):
     print()
     print('========= Errors =========')
-    print(*errorTests, sep='\n')
+    if args.result == 'full' or args.result == 'errors':
+        for errTest in errorTests:
+            print(errTest, '\n', errorTests[errTest], sep='', end='')
+    else:
+        print(*errorTests, sep='\n')
 
 if len(mismTests):
     print()
     print('======== Mismatch ========')
-    print(*mismTests, sep='\n')
+    if args.result == 'full' or args.result == 'mismatches':
+        for mTest in mismTests:
+            print(mTest, '\n', mismTests[mTest], sep='', end='')
+    else:
+        print(*mismTests, sep='\n')
+
+if len(unkTests):
+    print()
+    print('======== Unknown ========')
+    if args.result == 'full' or args.result == 'unknown':
+        for uTest in unkTests:
+            print(uTest, '\n', unkTests[uTest], sep='', end='')
+    else:
+        print(*unkTests, sep='\n')
