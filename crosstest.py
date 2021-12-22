@@ -175,6 +175,7 @@ argParser.add_argument('repo', default='.', type=str,
 args = argParser.parse_args()
 args.who = [ *map(str.strip, args.who.split(',')) ]
 ownrepo = args.repo
+basedir = os.getcwd()
 
 #######################
 
@@ -227,7 +228,12 @@ else:
         if not os.path.exists(repo['dir']):
             uptodate = False
             subprocess.run(['git', 'clone', repo['url'], repo['dir']])
+        else:
+            uptodate = False
+            os.chdir(repo['dir'])
+            subprocess.run(['git', 'pull', 'origin'])
 
+    os.chdir(basedir)
     if uptodate: log.info('Repos are up to date')
 
 #######################
