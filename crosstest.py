@@ -120,31 +120,37 @@ class Logger:
     def __init__(self):
         self.debugging = False
         self.colors = True
+        self.disabled = False
 
     def info(self, *args):
-        if self.colors: print('[\033[32minfo\033[0m] ', *args)
-        else: print('[info] ', *args)
+        if not self.disabled:
+            if self.colors: print('[\033[32minfo\033[0m] ', *args)
+            else: print('[info] ', *args)
 
     def warning(self, *args):
-        if self.colors: print('[\033[93mwarning\033[0m] ', *args)
-        else: print('[warning] ', *args)
+        if not self.disabled:
+            if self.colors: print('[\033[93mwarning\033[0m] ', *args)
+            else: print('[warning] ', *args)
 
     def debug(self, *args):
-        if self.debugging:
+        if self.debugging and not self.disabled:
             if self.colors: print('[\033[96mdebug\033[0m] ', *args)
             else: print('[debug] ', *args)
 
     def error(self, *args):
-        if self.colors: print('[\033[31mERROR\033[0m] ', *args)
-        else: print('[ERROR] ', *args)
+        if not self.disabled:
+            if self.colors: print('[\033[31mERROR\033[0m] ', *args)
+            else: print('[ERROR] ', *args)
 
     def abort(self, *args, exitCode=1):
-        if self.colors: print('[\033[91mCRITICAL\033[0m] ', *args)
-        else: print('[CRITICAL] ', *args)
-        exit(exitCode)
+        if not self.disabled:
+            if self.colors: print('[\033[91mCRITICAL\033[0m] ', *args)
+            else: print('[CRITICAL] ', *args)
+            exit(exitCode)
 
     def debugOn(self): self.debugging = True
     def colorsOff(self): self.colors = False
+    def disable(self): self.disabled = True
 log = Logger()
 
 ########################################################################
@@ -154,16 +160,20 @@ argParser.add_argument('-w', '--who', default='', type=str,
         help='Names separated with ",". People who you want to take tests from')
 # argParser.add_argument('-m', '--me', default='', type=str,
         # help='Your name. It will prevent tester from downloading your own repo with --saveall')
-argParser.add_argument('--saveall', action='store_true',
-        help='Saves all repos to your drive')
 argParser.add_argument('--debug', action='store_true',
         help='Print debug output')
 argParser.add_argument('--nocolors', action='store_true',
         help='Disabels colors in logger')
+argParser.add_argument('--statonly', action='store_true',
+        help='Dosen\'t skip tasks were eval is used')
 argParser.add_argument('--alloweval', action='store_true',
         help='Dosen\'t skip tasks were eval is used')
 # argParser.add_argument('--upgrade', action='store_true',
         # help='Redownloads repos')
+argParser.add_argument('-o', '--only', default='',
+        help='Test only this tasks')
+argParser.add_argument('-e', '--exclude', default='',
+        help='Exclude folders wrong checking')
 argParser.add_argument('--result', default='short',
         choices=['short', 'full', 'errors', 'mismatches'],
         help='Controls how statistic is displayed at the end')
@@ -174,6 +184,8 @@ argParser.add_argument('repo', default='.', type=str,
 
 args = argParser.parse_args()
 args.who = [ *map(str.strip, args.who.split(',')) ]
+args.only = [ *map(str.strip, args.only.split(',')) ]
+args.exclude = [ *map(str.strip, args.exclude.split(',')) ]
 ownrepo = args.repo
 basedir = os.getcwd()
 
@@ -184,6 +196,7 @@ if not os.path.isdir(ownrepo):
 
 if args.debug: log.debugOn()
 if args.nocolors: log.colorsOff()
+if args.statonly: log.disable()
 
 if not sys.stdout.isatty(): log.colorsOff()
 
@@ -191,28 +204,25 @@ log.debug(args)
 
 #######################
 
-if args.saveall:
-    choosenRepos = REPOS
-else:
-    choosenRepos = []
-    for who in args.who:
-        chosen = None
-        bestMatch = ''
-        regex = f'(?:{"|".join(who.split())})'
+choosenRepos = []
+for who in args.who:
+    chosen = None
+    bestMatch = ''
+    regex = f'(?:{"|".join(who.split())})'
 
-        for repo in REPOS:
-            match = ' '.join(re.findall(regex, repo['owner'], flags=re.I))
-            if len(match) == 0: continue
-            if len(bestMatch) < len(match):
-                chosen = repo
-                bestMatch = match
-            elif len(bestMatch) == len(match):
-                log.warning(f'Same owner name for {who} ({repo["owner"]}), using {chosen["owner"]}')
+    for repo in REPOS:
+        match = ' '.join(re.findall(regex, repo['owner'], flags=re.I))
+        if len(match) == 0: continue
+        if len(bestMatch) < len(match):
+            chosen = repo
+            bestMatch = match
+        elif len(bestMatch) == len(match):
+            log.warning(f'Same owner name for {who} ({repo["owner"]}), using {chosen["owner"]}')
 
-        if chosen:
-            choosenRepos.append(chosen)
-        else:
-            log.warning('No repo found for', who)
+    if chosen:
+        choosenRepos.append(chosen)
+    else:
+        log.warning('No repo found for', who)
 
 #######################
 
@@ -253,12 +263,16 @@ unkTests = dict()
 dirs = sorted([ *filter(lambda x: re.match('^2021\d+$', x), os.listdir(ownrepo)) ])
 for dir in dirs:
     if dir in IGNORED_DIRS: continue
+    if dir in args.exclude: continue
+    if len(args.only) and dir not in args.only: continue
 
     condir = os.path.join(ownrepo, dir)
     tasks = sorted([ *filter(lambda x: re.match('^\d+$', x), os.listdir(condir)) ])
     log.debug('condir - ', condir, ':', tasks)
 
     for task in tasks:
+        if f'{dir}/{task}' in args.exclude: continue
+
         taskdir = os.path.join(condir, task)
         pyfiles = { *filter(lambda x: re.match('.*\.py$', x), os.listdir(taskdir)) }
         log.debug('taskdi - ', taskdir, ':', pyfiles)
